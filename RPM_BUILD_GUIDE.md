@@ -10,16 +10,17 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [System Requirements](#system-requirements)
-3. [Install Build Dependencies](#install-build-dependencies)
-4. [Clone the Repository](#clone-the-repository)
-5. [Initialize Git Submodules](#initialize-git-submodules)
-6. [Build the Project](#build-the-project)
-7. [Generate the RPM Package](#generate-the-rpm-package)
-8. [Install the RPM](#install-the-rpm)
-9. [Package Contents](#package-contents)
-10. [Troubleshooting](#troubleshooting)
-11. [CI/CD Reference](#cicd-reference)
+2. [Quick Start — Automated Script](#quick-start--automated-script)
+3. [System Requirements](#system-requirements)
+4. [Install Build Dependencies](#install-build-dependencies)
+5. [Clone the Repository](#clone-the-repository)
+6. [Initialize Git Submodules](#initialize-git-submodules)
+7. [Manual Build Steps](#manual-build-steps)
+8. [Generate the RPM Package](#generate-the-rpm-package)
+9. [Install the RPM](#install-the-rpm)
+10. [Package Contents](#package-contents)
+11. [Troubleshooting](#troubleshooting)
+12. [CI/CD Reference](#cicd-reference)
 
 ---
 
@@ -29,6 +30,84 @@ OpenBoardView is an open-source viewer for PCB board layout files (`.brd`, `.bvr
 
 ```
 Source → cmake → make → make package → .rpm + .deb
+```
+
+There are **two ways** to build the RPM:
+- **Automated:** Use [`rpm_package_build.sh`](./rpm_package_build.sh) — handles everything end-to-end *(recommended)*
+- **Manual:** Follow the step-by-step instructions in [Manual Build Steps](#manual-build-steps)
+
+---
+
+## Quick Start — Automated Script
+
+The [`rpm_package_build.sh`](./rpm_package_build.sh) script automates the complete pipeline: dependency checks → submodule sync → compile → package → smoke-test. It always selects the RPM with the **newest file timestamp**, so running it multiple times never accidentally uses a stale package.
+
+```bash
+# Clone the repo
+git clone https://github.com/akbar-npj/OpenBoardView.git
+cd OpenBoardView
+
+# Run the automated build (incremental — reuses existing build directory)
+bash rpm_package_build.sh
+
+# Or force a clean recompile from scratch
+bash rpm_package_build.sh --recompile
+
+# Build AND install in one step (requires sudo)
+bash rpm_package_build.sh --recompile --install
+```
+
+### Script options
+
+| Flag | Description |
+|---|---|
+| `--recompile` | Wipe `release_build/` and start fresh |
+| `--install` | Install the newly built RPM via `dnf localinstall` (needs sudo) |
+| `--clean` | Delete old `*.rpm` / `*.deb` files from the project root before building |
+| `--skip-deps` | Skip the dependency-check step |
+| `--skip-test` | Skip the smoke-test / install-verify step |
+| `--help` | Show usage |
+
+### What the script does (7 steps)
+
+```
+Step 1  Verify project root (CMakeLists.txt present)
+Step 2  Check all build dependencies (cmake, gcc, rpmbuild, gtk3, SDL2 …)
+Step 3  Initialise / update git submodules
+Step 4  Run cmake + make install/strip  →  bin/openboardview
+Step 5  Run make package (CPack)        →  *.rpm + *.deb
+Step 6  Select newest *.rpm by file timestamp
+Step 7  Smoke-test: rpm -qip, rpm -qlp, binary executable check
+```
+
+> **Note on newest-package selection:** `ls -t *.rpm | head -n 1` orders by `mtime` descending and takes the first result. If you run the script multiple times (e.g. testing version bumps), the most recently generated package is always used — no manual hunting required.
+
+### Example output (abbreviated)
+
+```
+╔══════════════════════════════════════════════╗
+║  OpenBoardView — RPM Automated Build Script  ║
+╚══════════════════════════════════════════════╝
+  Project root : /home/user/OpenBoardView
+  Threads      : 8   Recompile: false
+
+══ Step 2 — Checking build dependencies ══
+[OK]    cmake found   [OK]    rpmbuild found
+[OK]    pkg: gtk+-3.0  [OK]    pkg: sdl2  …
+
+══ Step 6 — Selecting newest RPM by timestamp ══
+[OK]    Selected: openboardview-10.0.0-1.aarch64.rpm  (modified: 2026-10-03 00:45:48)
+
+══ Step 7 — Smoke-testing the RPM ══
+[OK]    Package name    : openboardview
+[OK]    Binary /usr/bin/openboardview confirmed in package payload
+[OK]    Smoke test passed
+
+╔══════════════════════════════════════════════════╗
+║  Build complete!                                 ║
+║  RPM : openboardview-10.0.0-1.aarch64.rpm        ║
+║  Size: 804K (disk)                               ║
+╚══════════════════════════════════════════════════╝
 ```
 
 ---
@@ -44,7 +123,7 @@ Source → cmake → make → make package → .rpm + .deb
 | rpm-build | Any recent version |
 | Git | 2.x+ |
 
-> **Note:** This guide was tested on **Fedora Linux Asahi Remix 44 (aarch64)** with CMake 4.3.0 and GCC 16.2.1. The resulting package `openboardview-10.0.0-1.aarch64.rpm` is ~803 KB (1.78 MB installed).
+> **Note:** This guide was tested on **Fedora Linux Asahi Remix 44 (aarch64)** with CMake 4.3.0 and GCC 16.2.1. The resulting package `openboardview-10.0.0-1.aarch64.rpm` is ~804 KB (1.78 MB installed).
 
 ---
 
@@ -71,11 +150,11 @@ sudo dnf install -y \
 ### Verify all libraries are detected
 
 ```bash
-pkg-config --exists gtk+-3.0 && echo "gtk3 ✓"
-pkg-config --exists sdl2     && echo "SDL2 ✓"
-pkg-config --exists sqlite3  && echo "sqlite3 ✓"
+pkg-config --exists gtk+-3.0  && echo "gtk3 ✓"
+pkg-config --exists sdl2      && echo "SDL2 ✓"
+pkg-config --exists sqlite3   && echo "sqlite3 ✓"
 pkg-config --exists fontconfig && echo "fontconfig ✓"
-pkg-config --exists zlib     && echo "zlib ✓"
+pkg-config --exists zlib      && echo "zlib ✓"
 ```
 
 All five should print a checkmark. If any are missing, install the corresponding `-devel` package.
@@ -89,7 +168,7 @@ git clone https://github.com/akbar-npj/OpenBoardView.git
 cd OpenBoardView
 ```
 
-> **Important:** Always clone with full history (`--no shallow`) so the build system can embed the correct git revision string into the binary.
+> **Important:** Always clone with full history (not `--depth 1`) so the build system can embed the correct git revision string into the binary.
 
 ---
 
@@ -115,21 +194,17 @@ This step clones all submodules from their upstream GitHub repositories. It requ
 
 ---
 
-## Build the Project
+## Manual Build Steps
 
-Use the provided `build.sh` wrapper script which handles CMake configuration and `make install/strip` in one step:
+> If you prefer to use the automated script, skip directly to [Generate the RPM Package](#generate-the-rpm-package).
+
+### Option A — Using `build.sh` (upstream wrapper)
 
 ```bash
 bash ./build.sh --recompile
 ```
 
-### What `build.sh` does
-
-1. Creates a `release_build/` directory (or wipes it if `--recompile` is passed)
-2. Runs `cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX= ..`
-3. Runs `make -j$(nproc) install/strip` — compiles with all CPU threads and strips debug symbols
-
-### Optional flags
+`build.sh` handles cmake configuration and `make install/strip` in one step. It installs the binary and assets under `bin/` and `share/` in the project root.
 
 | Flag | Description |
 |---|---|
@@ -137,17 +212,16 @@ bash ./build.sh --recompile
 | `--debug` | Debug build (uses `debug_build/`, no stripping) |
 | `--help` | Show usage |
 
-### Manual CMake approach (alternative)
+### Option B — Manual CMake
 
 ```bash
 mkdir release_build && cd release_build
+export DESTDIR="$(dirname $PWD)"   # install into project root
 cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX= ..
 make -j$(nproc) install/strip
 ```
 
-### Expected output
-
-Upon success, the binary and assets are installed to:
+### Expected installed files
 
 ```
 bin/openboardview                              ← executable
@@ -175,6 +249,16 @@ CPack: Create package using RPM → openboardview-10.0.0-1.aarch64.rpm
 
 Both files are placed in the **project root** (`/path/to/OpenBoardView/`).
 
+### Selecting the newest RPM
+
+If you have run the build multiple times, always pick the latest package by timestamp:
+
+```bash
+# Newest RPM — reliable one-liner used by rpm_package_build.sh
+NEWEST_RPM=$(ls -t *.rpm | head -n 1)
+echo "Selected: $NEWEST_RPM"
+```
+
 ### Package details
 
 | Field | Value |
@@ -186,7 +270,7 @@ Both files are placed in the **project root** (`/path/to/OpenBoardView/`).
 | License | MIT |
 | Group | Applications/Engineering |
 | Installed size | ~1.78 MB |
-| RPM size | ~803 KB |
+| RPM size | ~804 KB |
 | Requires | `gtk3` |
 
 ### Inspect the package without installing
@@ -204,28 +288,26 @@ rpm -qlp openboardview-10.0.0-1.aarch64.rpm
 ## Install the RPM
 
 ```bash
-sudo rpm -ivh openboardview-10.0.0-1.aarch64.rpm
-```
-
-Or using `dnf` for automatic dependency resolution:
-
-```bash
+# Using dnf (recommended — resolves dependencies automatically)
 sudo dnf localinstall openboardview-10.0.0-1.aarch64.rpm
+
+# Or using rpm directly
+sudo rpm -ivh openboardview-10.0.0-1.aarch64.rpm
 ```
 
 ### Verify installation
 
 ```bash
 rpm -q openboardview
-openboardview --version   # or just launch it
+which openboardview
 ```
 
 ### Uninstall
 
 ```bash
-sudo rpm -e openboardview
-# or
 sudo dnf remove openboardview
+# or
+sudo rpm -e openboardview
 ```
 
 ---
@@ -249,53 +331,58 @@ Post-install scripts automatically refresh the icon cache, MIME database, and de
 ## Troubleshooting
 
 ### CMake can't find SDL2
-
 ```bash
 sudo dnf install SDL2-devel
 ```
 
 ### CMake can't find GTK3
-
 ```bash
 sudo dnf install gtk3-devel
 ```
 
 ### `rpmbuild` not found
-
 ```bash
 sudo dnf install rpm-build
 ```
 
+### `make install/strip` fails with "cannot create directory: /share/applications"
+
+This means `DESTDIR` was not set. The build assumes files are staged into the project root. Always use the script or set `DESTDIR` explicitly:
+
+```bash
+export DESTDIR="/path/to/OpenBoardView"
+# then re-run make install/strip
+```
+
+Or simply use `rpm_package_build.sh` which handles this automatically.
+
 ### Submodule clone fails (SSL / network error)
 
-Try using SSH instead of HTTPS for cloning:
+Try using SSH instead of HTTPS:
 ```bash
 git config --global url."git@github.com:".insteadOf "https://github.com/"
 git submodule update --init --recursive
 ```
 
 ### Build fails with "GCC version needs to be >= 4.8"
-
-Update GCC:
 ```bash
 sudo dnf install gcc gcc-c++
 ```
 
 ### `make package` produces no `.rpm`
 
-Ensure `rpm-build` is installed before running CMake. If CMake was already run without it, re-run from scratch:
+Ensure `rpm-build` is installed **before** running CMake. If CMake was already run without it, start fresh:
 
 ```bash
 rm -rf release_build
-bash ./build.sh --recompile
-cd release_build && make package
+bash rpm_package_build.sh --recompile
 ```
 
 ---
 
 ## CI/CD Reference
 
-The project's GitHub Actions workflow (`.github/workflows/make_packages.yml`) uses Docker to build the DEB and RPM packages on every push. The Docker-based build environment is defined in `Dockerfile` and uses a Debian base image for cross-compatibility.
+The project's GitHub Actions workflow (`.github/workflows/make_packages.yml`) uses Docker to build the DEB and RPM packages on every push. The Docker-based build environment is defined in `Dockerfile`.
 
 To replicate the CI build locally using Docker:
 
@@ -303,7 +390,7 @@ To replicate the CI build locally using Docker:
 docker build --target linux-build-env -t openboardview.org/linux-build-env:latest .
 docker run --rm -v "$PWD:$PWD" -w "$PWD" -u "$(id -u):$(id -g)" \
   openboardview.org/linux-build-env:latest \
-  sh -c 'bash ./build.sh --recompile && cd release_build && make package'
+  bash rpm_package_build.sh --recompile
 ```
 
 ---
@@ -311,15 +398,21 @@ docker run --rm -v "$PWD:$PWD" -w "$PWD" -u "$(id -u):$(id -g)" \
 ## Quick Reference
 
 ```bash
-# Full build + RPM in one shot
+# Automated (recommended)
+git clone https://github.com/akbar-npj/OpenBoardView.git
+cd OpenBoardView
+bash rpm_package_build.sh --recompile
+
+# Manual
 git clone https://github.com/akbar-npj/OpenBoardView.git
 cd OpenBoardView
 git submodule update --init --recursive
 bash ./build.sh --recompile
 cd release_build && make package
-ls ../*.rpm
+ls -t ../*.rpm | head -n 1   # newest RPM
 ```
 
 ---
 
-*Guide generated for OpenBoardView v10.0.0 on Fedora Linux Asahi Remix 44 (aarch64)*
+*Guide generated for OpenBoardView v10.0.0 on Fedora Linux Asahi Remix 44 (aarch64)*  
+*Automated build script: [`rpm_package_build.sh`](./rpm_package_build.sh)*
